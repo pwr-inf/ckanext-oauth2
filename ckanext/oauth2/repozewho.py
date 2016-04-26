@@ -29,17 +29,27 @@ class OAuth2Plugin(object):
 
     implements(IIdentifier, IChallenger, IAuthenticator)
 
-    def __init__(self, authorization_endpoint=None, token_endpoint=None, client_id=None, client_secret=None,
-                scope=None, rememberer_name=None, profile_api_url=None, profile_api_user_field=None):
+    def __init__(
+            self,
+            authorization_endpoint=None,
+            token_endpoint=None,
+            client_id=None,
+            client_secret=None,
+            scope=None,
+            rememberer_name=None,
+            profile_api_url=None,
+            profile_api_user_field=None):
 
         if not authorization_endpoint or not token_endpoint or not client_id or not client_secret:
-            raise ValueError('authorization_endpoint, token_endpoint, client_id and client_secret parameters '
+            raise ValueError(
+                'authorization_endpoint, token_endpoint, client_id and client_secret parameters '
                 'are required')
         self.authorization_endpoint = authorization_endpoint
         self.token_endpoint = token_endpoint
         self.client_id = client_id
         self.client_secret = client_secret
-        self.scope = scope if scope is None else (scope.split(' ') if ' ' in scope else scope.split('\n'))
+        self.scope = scope if scope is None else (
+            scope.split(' ') if ' ' in scope else scope.split('\n'))
         self.rememberer_name = rememberer_name
         self.profile_api_url = profile_api_url
         self.profile_api_user_field = profile_api_user_field
@@ -57,13 +67,18 @@ class OAuth2Plugin(object):
         log.debug('Repoze OAuth challenge')
         request = Request(environ)
         state = b64encode(bytes(json.dumps({'came_from': request.url})))
-        oauth = OAuth2Session(self.client_id, redirect_uri=self._redirect_uri(request), scope=self.scope, state=state)
+        oauth = OAuth2Session(
+            self.client_id,
+            redirect_uri=self._redirect_uri(request),
+            scope=self.scope,
+            state=state)
         auth_url, _ = oauth.authorization_url(self.authorization_endpoint)
 
         response = Response()
         response.status = 302
         response.location = auth_url
-        log.debug("Challenge: Redirecting challenge to page {0}".format(auth_url))
+        log.debug(
+            "Challenge: Redirecting challenge to page {0}".format(auth_url))
         return response
 
     def identify(self, environ):
@@ -75,11 +90,14 @@ class OAuth2Plugin(object):
         state = request.params.get('state')
         decoded_state = json.loads(b64decode(state))
         came_from = decoded_state.get('came_from', '/')
-        oauth = OAuth2Session(self.client_id, redirect_uri=self._redirect_uri(request), scope=self.scope)
+        oauth = OAuth2Session(
+            self.client_id,
+            redirect_uri=self._redirect_uri(request),
+            scope=self.scope)
         token = oauth.fetch_token(self.token_endpoint,
-            client_secret=self.client_secret,
-            authorization_response=request.url
-        )
+                                  client_secret=self.client_secret,
+                                  authorization_response=request.url
+                                  )
         return {'oauth2.token': token, 'came_from': came_from}
 
     def authenticate(self, environ, identity):
@@ -89,17 +107,32 @@ class OAuth2Plugin(object):
         request = Request(environ)
         log.debug('Repoze OAuth authenticate')
         if 'oauth2.token' in identity:
-            oauth = OAuth2Session(self.client_id, token=identity['oauth2.token'])
+            oauth = OAuth2Session(
+                self.client_id,
+                token=identity['oauth2.token'])
             profile_response = oauth.get(self.profile_api_url)
-            user_data = profile_response.json()
-            username = user_data[self.profile_api_user_field]
-            user = User.by_name(username)
-            if user is None:
+            profile_data = profile_response.json()
+            if not profile_data['authenticated']:
                 return None
-            else:
-                identity.update({'repoze.who.userid': user.name})
-                self._redirect_from_callback(request, identity)
-                return user.name
+
+            user_data = profile_data['principal']
+
+            user = User.by_name(user_data['username'])
+
+            if user is None:
+                user = User()
+                user.name = user_data['username']
+                user.email = user_data['email']
+                user.fullname = u"{} {}".format(
+                    user_data['name'], user_data['surname'])
+                user.save()
+                user.activate()
+                user.save()
+
+            identity.update({'repoze.who.userid': user.name})
+            self._redirect_from_callback(request, identity)
+            return user.name
+
         return None
 
     def _get_rememberer(self, environ):
